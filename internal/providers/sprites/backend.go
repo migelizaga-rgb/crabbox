@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"path"
 	"strings"
 	"time"
@@ -78,6 +79,8 @@ type spritesBackend struct {
 	cfg    core.Config
 	rt     core.Runtime
 	client spritesAPI
+	// waitSSH defaults to core.WaitForSSHReady; tests replace the network probe.
+	waitSSH func(context.Context, *core.SSHTarget, io.Writer, string, time.Duration) error
 }
 
 func (b *spritesBackend) Spec() core.ProviderSpec { return b.spec }
@@ -87,6 +90,9 @@ func (b *spritesBackend) RebindResolvedLeaseTarget(target *core.LeaseTarget, lea
 }
 
 func (b *spritesBackend) Acquire(ctx context.Context, req core.AcquireRequest) (core.LeaseTarget, error) {
+	if req.RequestedLeaseID != "" {
+		return b.acquireFixed(ctx, req)
+	}
 	if err := b.ensureCLI(ctx); err != nil {
 		return core.LeaseTarget{}, err
 	}
@@ -149,6 +155,11 @@ func (b *spritesBackend) Acquire(ctx context.Context, req core.AcquireRequest) (
 }
 
 func (b *spritesBackend) Resolve(ctx context.Context, req core.ResolveRequest) (core.LeaseTarget, error) {
+	if claim, ok, err := core.ResolveLeaseClaimForProvider(req.ID, spritesProvider); err != nil {
+		return core.LeaseTarget{}, err
+	} else if ok && fixedSpriteKind.IsFixedClaim(claim) {
+		return b.resolveFixed(ctx, claim, req)
+	}
 	name, leaseID, slug, err := b.resolveSpriteName(ctx, req.ID, req.Reclaim)
 	if err != nil {
 		return core.LeaseTarget{}, err
@@ -282,6 +293,19 @@ func (b *spritesBackend) Doctor(ctx context.Context, _ core.DoctorRequest) (core
 }
 
 func (b *spritesBackend) ReleaseLease(ctx context.Context, req core.ReleaseLeaseRequest) error {
+	if snapshot, exists, set := core.ServerLeaseClaimSnapshot(req.Lease.Server); set && exists && fixedSpriteKind.IsFixedClaim(snapshot) {
+		claim, err := shared.RequireClaimSnapshot(req.Lease.Server, spritesProvider)
+		if err != nil {
+			return err
+		}
+		if req.Lease.LeaseID != claim.LeaseID {
+			return core.Exit(4, "lease_id_conflict: Sprites release target changed")
+		}
+		if err := core.ValidateLeaseTargetProviderIdentity(req.Lease, req.ExpectedProviderIdentity); err != nil {
+			return err
+		}
+		return b.releaseFixed(ctx, claim)
+	}
 	name := strings.TrimSpace(req.Lease.Server.Name)
 	if name == "" {
 		var err error
@@ -424,7 +448,11 @@ func (b *spritesBackend) prepareLease(ctx context.Context, sprite spritesInfo, l
 	server.Labels["work_root"] = cfg.WorkRoot
 	server.Labels["state"] = "ready"
 	server.Status = "ready"
-	if err := core.WaitForSSHReady(ctx, &target, b.rt.Stderr, "sprites ssh", core.BootstrapWaitTimeout(cfg)); err != nil {
+	waitSSH := b.waitSSH
+	if waitSSH == nil {
+		waitSSH = core.WaitForSSHReady
+	}
+	if err := waitSSH(ctx, &target, b.rt.Stderr, "sprites ssh", core.BootstrapWaitTimeout(cfg)); err != nil {
 		return core.LeaseTarget{}, err
 	}
 	return core.LeaseTarget{Server: server, SSH: target, LeaseID: leaseID}, nil

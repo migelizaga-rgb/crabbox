@@ -21,7 +21,9 @@ func (b *spritesBackend) Status(ctx context.Context, req core.StatusRequest) (co
 		ProviderResourceID: server.Labels["sprites_resource_id"], ServerType: "sprite",
 		Host: server.Name, Network: networkPublic, HasHost: target.Host != "",
 		SSHHost: target.Host, SSHUser: target.User, SSHPort: target.Port, SSHKey: target.Key,
-		Labels: server.Labels,
+		Labels:      server.Labels,
+		IdleTimeout: core.LeaseLabelDurationDisplay(server.Labels["idle_timeout_secs"], server.Labels["idle_timeout"]),
+		ExpiresAt:   core.Blank(core.LeaseLabelTimeDisplay(server.Labels["expires_at"]), server.Labels["expires_at"]),
 	}
 	if req.Wait && target.Key != "" {
 		view.Ready = core.ProbeSSHReady(ctx, &target, 4*time.Second)

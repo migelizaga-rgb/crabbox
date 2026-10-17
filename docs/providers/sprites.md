@@ -31,6 +31,7 @@ supports none of those.
 | Desktop / browser / code | No |
 | Tailscale | No (SSH is exposed through `sprite proxy`) |
 | Coordinator (broker) | No (always direct from the CLI) |
+| Fixed lease IDs | Yes (`warmup --lease-id`) |
 
 `--class`, `--type`, and `--tailscale` are rejected: Sprites owns VM sizing and
 exposes SSH only through its proxy. Only `target=linux` is accepted.
@@ -160,6 +161,54 @@ Sprites cannot independently prove ownership of an arbitrary lost-claim sprite.
 Normal reuse without a local ownership claim requires `--reclaim` even when all
 Crabbox labels match. Adoption requires an immutable provider resource ID;
 read-only status and inspection do not create a claim or bootstrap the Sprite.
+
+## Fixed lease IDs
+
+```sh
+crabbox warmup --provider sprites --lease-id cbx_123456789abc
+crabbox warmup --provider sprites --lease-id cbx_123456789abc
+crabbox stop --provider sprites cbx_123456789abc
+```
+
+Sprites has no idempotency key, but Sprite names are unique per organization
+and a duplicate create is rejected with HTTP 409. A fixed lease therefore uses a
+deterministic name derived from the canonical lease ID and slug, and the shared
+fixed-lease engine durably records the intent, API endpoint, token
+organization, and a random per-attempt nonce before sending the create. The
+create request carries the usual lease labels plus `attempt-<nonce>`; Sprites
+stores labels atomically with the Sprite.
+
+Crabbox never treats the create reply as identity evidence. After every create,
+and on every replay, it reads the Sprite by name and adopts it only when its
+name, organization, lease and slug labels, and attempt nonce all match the
+recorded intent. It then binds the immutable Sprite `id`; later reads must
+match it exactly. A Sprite with the same name but any other labels, nonce,
+organization, or `id` produces `lease_id_conflict` and is never deleted.
+
+| Interrupted step | Replay outcome |
+| --- | --- |
+| Create reply lost, Sprite exists | Adopted after attestation; no second create |
+| Create never landed (404 for the name) | The same attempt is resubmitted |
+| Sprite bound, then deleted out of band | `lease_id_conflict`; `stop` records absence |
+
+A 404 only proves absence after the token's organization is confirmed to match
+the claim, since a token for another organization sees every foreign Sprite as
+missing. If a create outcome is still unresolved, `stop` refuses and asks for a
+replay with the same lease ID first.
+
+Release re-reads and re-attests the Sprite immediately before deleting it by
+name, then requires a 404 before publishing a `released` tombstone. A failed or
+unconfirmed delete keeps the claim for retry. The tombstone keeps the lease ID
+from being reused for a new Sprite: later warmups with it fail, `status` reports
+`released`, and repeat `stop` calls succeed without touching the API.
+
+The Sprites API addresses a Sprite only by name: there is no delete or read by
+immutable `id` and no conditional request. Two limits follow. Re-attestation
+narrows, but cannot close, the window between the last check and the delete in
+which a same-name replacement could appear. And a Sprite deleted out of band
+before its `id` was bound is indistinguishable from a create that never landed,
+so a replay recreates it; a lease still has at most one live Sprite. Once the
+`id` is bound, the same disappearance is reported as `lease_id_conflict`.
 
 ## Live smoke
 
