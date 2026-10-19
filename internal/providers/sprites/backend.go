@@ -81,6 +81,8 @@ type spritesBackend struct {
 	client spritesAPI
 	// waitSSH defaults to core.WaitForSSHReady; tests replace the network probe.
 	waitSSH func(context.Context, *core.SSHTarget, io.Writer, string, time.Duration) error
+	// holdTask defaults to the Sprites Tasks API helper; tests replace process execution.
+	holdTask func(context.Context, string, time.Duration) error
 }
 
 func (b *spritesBackend) Spec() core.ProviderSpec { return b.spec }
@@ -407,12 +409,23 @@ func spriteHasExactOwnership(sprite spritesInfo, leaseID, slug string) bool {
 	return true
 }
 
-func (b *spritesBackend) Touch(_ context.Context, req core.TouchRequest) (core.Server, error) {
+func (b *spritesBackend) Touch(ctx context.Context, req core.TouchRequest) (core.Server, error) {
 	server := req.Lease.Server
 	if server.Labels == nil {
 		server.Labels = map[string]string{}
 	}
 	server.Labels = core.TouchDirectLeaseLabels(server.Labels, b.cfg, req.State, time.Now().UTC())
+	name, err := b.resolvedLeaseSpriteName(req.Lease)
+	if err != nil {
+		return server, err
+	}
+	hold := b.holdTask
+	if hold == nil {
+		hold = b.holdSpriteTask
+	}
+	if err := hold(ctx, name, effectiveSpriteHoldTimeout(req.IdleTimeout, b.cfg.IdleTimeout)); err != nil {
+		return server, err
+	}
 	return server, nil
 }
 
@@ -455,7 +468,50 @@ func (b *spritesBackend) prepareLease(ctx context.Context, sprite spritesInfo, l
 	if err := waitSSH(ctx, &target, b.rt.Stderr, "sprites ssh", core.BootstrapWaitTimeout(cfg)); err != nil {
 		return core.LeaseTarget{}, err
 	}
-	return core.LeaseTarget{Server: server, SSH: target, LeaseID: leaseID}, nil
+	lease := core.LeaseTarget{Server: server, SSH: target, LeaseID: leaseID}
+	name, err := b.resolvedLeaseSpriteName(lease)
+	if err != nil {
+		return core.LeaseTarget{}, err
+	}
+	hold := b.holdTask
+	if hold == nil {
+		hold = b.holdSpriteTask
+	}
+	if err := hold(ctx, name, effectiveSpriteHoldTimeout(cfg.IdleTimeout, 0)); err != nil {
+		return core.LeaseTarget{}, err
+	}
+	return lease, nil
+}
+
+// resolvedLeaseSpriteName binds local execution to the resource name already
+// attached to this lease. A claim, when present, is authoritative and must
+// agree with the resolved server labels.
+func (b *spritesBackend) resolvedLeaseSpriteName(lease core.LeaseTarget) (string, error) {
+	if strings.TrimSpace(lease.LeaseID) == "" {
+		return "", core.Exit(4, "refusing Sprites task without a resolved lease ID")
+	}
+	name := strings.TrimSpace(lease.Server.Labels["name"])
+	if name == "" {
+		name = strings.TrimSpace(lease.Server.CloudID)
+	}
+	if name == "" {
+		return "", core.Exit(4, "refusing Sprites task without a resolved Sprite name")
+	}
+	if cloudID := strings.TrimSpace(lease.Server.CloudID); cloudID != "" && cloudID != name {
+		return "", core.Exit(4, "refusing Sprites task: lease Sprite labels do not match its resolved resource")
+	}
+	if claim, ok, err := core.ResolveLeaseClaim(lease.LeaseID); err != nil {
+		return "", err
+	} else if ok {
+		if claim.Provider != "" && claim.Provider != spritesProvider {
+			return "", core.Exit(4, "refusing Sprites task: lease claim belongs to provider=%s", claim.Provider)
+		}
+		claimName, hasName := spriteNameFromClaim(claim)
+		if !hasName || claimName != name {
+			return "", core.Exit(4, "refusing Sprites task: lease Sprite does not match its resolved ownership claim")
+		}
+	}
+	return name, nil
 }
 
 func (b *spritesBackend) bootstrapSSH(ctx context.Context, spriteName, publicKey string) error {

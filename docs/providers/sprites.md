@@ -153,6 +153,15 @@ against the saved claim and rechecks absence before removing the local claim
 and key. Claims without the original organization and immutable ID are preserved,
 as are claims when the account differs or verification fails.
 
+### Staying awake
+
+While a lease is in use, Crabbox heartbeats upsert a `crabbox-lease` task through
+the in-Sprite Tasks API. The task keeps the Sprite running so background
+processes and their outbound connections remain reachable. Its expiry follows
+the lease idle window and is refreshed by each heartbeat; after the last
+heartbeat, it expires within that idle window so an idle lease stops billing
+compute. Sprites caps task expiry at one hour.
+
 Raw names and provider labels only discover sprites; they never authorize
 deletion. Explicit `--reclaim` can adopt a verified sprite through a normal
 reuse command before it can be stopped. `stop --force` is unavailable because
