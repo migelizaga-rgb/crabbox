@@ -94,6 +94,10 @@ func (b *spritesBackend) RebindResolvedLeaseTarget(target *core.LeaseTarget, lea
 }
 
 func (b *spritesBackend) Acquire(ctx context.Context, req core.AcquireRequest) (core.LeaseTarget, error) {
+	// Reject bootstrap env misconfiguration before any Sprite exists.
+	if _, err := spritesBootstrapEnv(); err != nil {
+		return core.LeaseTarget{}, err
+	}
 	if req.RequestedLeaseID != "" {
 		return b.acquireFixed(ctx, req)
 	}

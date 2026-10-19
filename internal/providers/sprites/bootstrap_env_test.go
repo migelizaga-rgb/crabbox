@@ -163,3 +163,15 @@ func TestSpritesBootstrapEnvDoesNotRunAfterSSHFailure(t *testing.T) {
 		t.Fatal("SSH failure must abort bootstrap")
 	}
 }
+
+func TestSpritesBootstrapEnvRejectedBeforeCreate(t *testing.T) {
+	api, newBackend, req := fixedSpritesFixture(t)
+	t.Setenv("CRABBOX_SPRITES_BOOTSTRAP_ENV", "CBX_UNSET_SECRET")
+	t.Setenv("CBX_UNSET_SECRET", "")
+	if _, err := newBackend().Acquire(t.Context(), req); err == nil || !strings.Contains(err.Error(), "CBX_UNSET_SECRET") {
+		t.Fatalf("err=%v, want unset-variable error", err)
+	}
+	if creates, _, live := api.counts(); creates != 0 || live != 0 {
+		t.Fatalf("creates=%d live=%d, want no Sprite", creates, live)
+	}
+}
