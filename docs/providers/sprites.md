@@ -67,6 +67,27 @@ with those same credentials. `crabbox ssh` prints a standalone OpenSSH command;
 before running that command yourself, configure the Sprite CLI with the same
 `SPRITE_TOKEN` and `SPRITES_API_URL` (and unset any conflicting `SPRITE_URL`).
 
+## Bootstrap secret files
+
+Set `CRABBOX_SPRITES_BOOTSTRAP_ENV=MY_API_KEY,MY_SERVICE_TOKEN` to copy
+those values from Crabbox's own process environment into root-only files at
+`/run/crabbox-bootstrap/<NAME>` in the Sprite's `/run` tmpfs. Unset or empty
+configuration leaves bootstrap unchanged. Each name must match
+`^[A-Z_][A-Z0-9_]{0,63}$`; at most eight names are accepted. Invalid names and
+unset or empty values fail before SSH bootstrap and identify only the name.
+Names are comma-separated without spaces.
+
+After SSH bootstrap succeeds, Crabbox streams each value over `sprite exec`
+stdin exactly as supplied, without adding a newline. Values never appear in
+command arguments or Crabbox logs; transfer output and underlying CLI errors
+are suppressed. Failures report `sprites bootstrap env <NAME> failed`.
+The directory is owned by root with mode `0700`; files use mode `0600` and
+are replaced through a temporary file. The files are ephemeral and are
+written again when lease preparation runs, including fixed-lease replay.
+They are not exported into the Sprite's environment. Commands consuming
+them need root access. A partial failure can leave earlier files updated;
+replay retries the configured values.
+
 ## Configuration
 
 ```yaml

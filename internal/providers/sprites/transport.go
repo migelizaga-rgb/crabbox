@@ -40,6 +40,10 @@ func (b *spritesBackend) sshTarget(name, keyPath string) (core.SSHTarget, error)
 }
 
 func (b *spritesBackend) runSprite(ctx context.Context, args []string, stdout, stderr io.Writer) (core.LocalCommandResult, error) {
+	return b.runSpriteWithStdin(ctx, args, nil, stdout, stderr)
+}
+
+func (b *spritesBackend) runSpriteWithStdin(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (core.LocalCommandResult, error) {
 	overrides, err := b.cliEnvironment()
 	if err != nil {
 		return core.LocalCommandResult{ExitCode: 2}, err
@@ -54,7 +58,7 @@ func (b *spritesBackend) runSprite(ctx context.Context, args []string, stdout, s
 	for _, name := range []string{"SPRITE_TOKEN", "SPRITE_URL", "SPRITES_API_URL"} {
 		env = append(env, name+"="+overrides[name])
 	}
-	return b.rt.Exec.Run(ctx, core.LocalCommandRequest{Name: "sprite", Args: args, Env: env, Stdout: stdout, Stderr: stderr})
+	return b.rt.Exec.Run(ctx, core.LocalCommandRequest{Name: "sprite", Args: args, Env: env, Stdin: stdin, Stdout: stdout, Stderr: stderr, DisableOutputCapture: stdin != nil})
 }
 
 func effectiveSpriteHoldTimeout(requested, configured time.Duration) time.Duration {

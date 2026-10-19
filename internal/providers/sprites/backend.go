@@ -5,7 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -448,7 +450,14 @@ func (b *spritesBackend) prepareLease(ctx context.Context, sprite spritesInfo, l
 	if err := cleanSpritesWorkRoot(cfg.WorkRoot); err != nil {
 		return core.LeaseTarget{}, err
 	}
+	bootstrapEnv, err := spritesBootstrapEnv()
+	if err != nil {
+		return core.LeaseTarget{}, err
+	}
 	if err := b.bootstrapSSH(ctx, sprite.Name, publicKey); err != nil {
+		return core.LeaseTarget{}, err
+	}
+	if err := b.bootstrapEnv(ctx, sprite.Name, bootstrapEnv); err != nil {
 		return core.LeaseTarget{}, err
 	}
 	target, err := b.sshTarget(sprite.Name, keyPath)
@@ -514,6 +523,48 @@ func (b *spritesBackend) resolvedLeaseSpriteName(lease core.LeaseTarget) (string
 	return name, nil
 }
 
+var spritesBootstrapEnvName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
+
+type spriteBootstrapEnv struct {
+	name  string
+	value string
+}
+
+func spritesBootstrapEnv() ([]spriteBootstrapEnv, error) {
+	raw := os.Getenv("CRABBOX_SPRITES_BOOTSTRAP_ENV")
+	if raw == "" {
+		return nil, nil
+	}
+	names := strings.Split(raw, ",")
+	if len(names) > 8 {
+		return nil, core.Exit(2, "CRABBOX_SPRITES_BOOTSTRAP_ENV permits at most 8 names")
+	}
+	values := make([]spriteBootstrapEnv, 0, len(names))
+	for _, name := range names {
+		if !spritesBootstrapEnvName.MatchString(name) {
+			return nil, core.Exit(2, "sprites bootstrap env %q: invalid variable name", name)
+		}
+		value := os.Getenv(name)
+		if value == "" {
+			return nil, core.Exit(2, "sprites bootstrap env %s: variable is unset or empty", name)
+		}
+		values = append(values, spriteBootstrapEnv{name: name, value: value})
+	}
+	return values, nil
+}
+
+func (b *spritesBackend) bootstrapEnv(ctx context.Context, spriteName string, values []spriteBootstrapEnv) error {
+	const script = `set -eu; sudo install -d -m 700 -o root -g root /run/crabbox-bootstrap; sudo sh -c 'umask 077; cat > "/run/crabbox-bootstrap/$1.tmp" && mv "/run/crabbox-bootstrap/$1.tmp" "/run/crabbox-bootstrap/$1"' sh "$1"`
+	for _, env := range values {
+		// Discard both streams and never wrap the runner error: the CLI may echo stdin.
+		result, err := b.runSpriteWithStdin(ctx, []string{"exec", "-s", spriteName, "--", "/bin/sh", "-c", script, "sh", env.name}, strings.NewReader(env.value), io.Discard, io.Discard)
+		if err != nil || result.ExitCode != 0 {
+			return core.Exit(1, "sprites bootstrap env %s failed", env.name)
+		}
+	}
+	return nil
+}
+
 func (b *spritesBackend) bootstrapSSH(ctx context.Context, spriteName, publicKey string) error {
 	script := strings.Join([]string{
 		"set -euo pipefail",
@@ -531,6 +582,9 @@ func (b *spritesBackend) bootstrapSSH(ctx context.Context, spriteName, publicKey
 	result, err := b.runSprite(ctx, []string{"exec", "-s", spriteName, "--env", "CRABBOX_SSH_PUBLIC_KEY=" + publicKey, "--", "/bin/bash", "-lc", script}, nil, b.rt.Stderr)
 	if err != nil {
 		return core.ExitError{Code: result.ExitCode, Message: fmt.Sprintf("sprites ssh bootstrap failed: %v", err)}
+	}
+	if result.ExitCode != 0 {
+		return core.Exit(result.ExitCode, "sprites ssh bootstrap failed")
 	}
 	return nil
 }
