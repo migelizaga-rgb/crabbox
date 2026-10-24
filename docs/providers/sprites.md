@@ -135,10 +135,11 @@ Reuse validates the saved API endpoint, immutable Sprite ID, organization,
 and lease ownership before installing keys or running bootstrap. A replacement
 Sprite with the same name is not silently adopted, even with `--reclaim`.
 
-Plain `status` is API-only: it does not wake the Sprite, generate keys, install
-packages, or start services. It reports the provider state with `ready=false`
-until readiness is explicitly probed. `status --wait` probes SSH using the
-existing key; it can wake the Sprite but does not bootstrap it. Use a normal
+Plain `status` and `inspect` do not wake the Sprite, generate keys, install
+packages, or start services. When the API reports the Sprite `running`, they
+probe SSH with the existing key and report real readiness; otherwise they report
+`ready=false` without contacting the Sprite. `status --wait` probes SSH in any
+state; it can wake the Sprite but does not bootstrap it. Use a normal
 reuse command such as `run --id <slug>` when SSH bootstrap needs to be retried.
 
 Status and list project native identity and state without inventing creation
@@ -272,7 +273,8 @@ Expected results:
   a raw sprite name.
 - A raw sprite that Crabbox did not create can only be adopted with `--reclaim`.
 - If `sprite proxy` cannot connect, SSH readiness and execution fail even when
-  the Sprites API can see the sprite. Plain `status` still uses only the API.
+  the Sprites API can see the sprite. Plain `status` of a sprite that is not
+  running still uses only the API.
 
 ## Related docs
 
