@@ -85,7 +85,7 @@ func TestSpritesBootstrapEnvFixedReplayStdinAndOrdering(t *testing.T) {
 	t.Setenv("CRABBOX_SPRITES_BOOTSTRAP_ENV", "CBX_TEST_SECRET,CBX_SECOND_SECRET")
 	t.Setenv("CBX_TEST_SECRET", secret)
 	t.Setenv("CBX_SECOND_SECRET", "second-value")
-	const script = `set -eu; sudo install -d -m 700 -o root -g root /run/crabbox-bootstrap; sudo sh -c 'umask 077; cat > "/run/crabbox-bootstrap/$1.tmp" && mv "/run/crabbox-bootstrap/$1.tmp" "/run/crabbox-bootstrap/$1"' sh "$1"`
+	const script = `set -eu; if sudo test -e /var/lib/crabbox-bootstrap/consumed; then cat >/dev/null; exit 0; fi; sudo install -d -m 700 -o root -g root /run/crabbox-bootstrap; sudo sh -c 'umask 077; cat > "/run/crabbox-bootstrap/$1.tmp" && mv "/run/crabbox-bootstrap/$1.tmp" "/run/crabbox-bootstrap/$1"' sh "$1"`
 	for attempt := 0; attempt < 2; attempt++ {
 		b := newBackend()
 		var order []string

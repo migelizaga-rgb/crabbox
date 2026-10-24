@@ -83,7 +83,10 @@ command arguments or Crabbox logs; transfer output and underlying CLI errors
 are suppressed. Failures report `sprites bootstrap env <NAME> failed`.
 The directory is owned by root with mode `0700`; files use mode `0600` and
 are replaced through a temporary file. The files are ephemeral and are
-written again when lease preparation runs, including fixed-lease replay.
+written again when lease preparation runs, including fixed-lease replay,
+until the Sprite has a `/var/lib/crabbox-bootstrap/consumed` marker. Setup
+that has used and deleted the values should create that root-owned marker so
+replay does not deliver them again; delivery then drains stdin and succeeds.
 They are not exported into the Sprite's environment. Commands consuming
 them need root access. A partial failure can leave earlier files updated;
 replay retries the configured values.

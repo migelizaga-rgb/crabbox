@@ -557,11 +557,16 @@ func spritesBootstrapEnv() ([]spriteBootstrapEnv, error) {
 	return values, nil
 }
 
+// spritesBootstrapConsumedMarker lets guest setup stop re-delivery after it has
+// used the values; lease preparation runs again on every fixed-lease replay.
+const spritesBootstrapConsumedMarker = "/var/lib/crabbox-bootstrap/consumed"
+
+const spritesBootstrapEnvScript = `set -eu; if sudo test -e ` + spritesBootstrapConsumedMarker + `; then cat >/dev/null; exit 0; fi; sudo install -d -m 700 -o root -g root /run/crabbox-bootstrap; sudo sh -c 'umask 077; cat > "/run/crabbox-bootstrap/$1.tmp" && mv "/run/crabbox-bootstrap/$1.tmp" "/run/crabbox-bootstrap/$1"' sh "$1"`
+
 func (b *spritesBackend) bootstrapEnv(ctx context.Context, spriteName string, values []spriteBootstrapEnv) error {
-	const script = `set -eu; sudo install -d -m 700 -o root -g root /run/crabbox-bootstrap; sudo sh -c 'umask 077; cat > "/run/crabbox-bootstrap/$1.tmp" && mv "/run/crabbox-bootstrap/$1.tmp" "/run/crabbox-bootstrap/$1"' sh "$1"`
 	for _, env := range values {
 		// Discard both streams and never wrap the runner error: the CLI may echo stdin.
-		result, err := b.runSpriteWithStdin(ctx, []string{"exec", "-s", spriteName, "--", "/bin/sh", "-c", script, "sh", env.name}, strings.NewReader(env.value), io.Discard, io.Discard)
+		result, err := b.runSpriteWithStdin(ctx, []string{"exec", "-s", spriteName, "--", "/bin/sh", "-c", spritesBootstrapEnvScript, "sh", env.name}, strings.NewReader(env.value), io.Discard, io.Discard)
 		if err != nil || result.ExitCode != 0 {
 			return core.Exit(1, "sprites bootstrap env %s failed", env.name)
 		}
